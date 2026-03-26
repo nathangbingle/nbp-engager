@@ -87,7 +87,7 @@ TARGETS = [
     {"handle": "cms_athletics_official",  "district": "CMS",            "type": "athletics"},
     {"handle": "hough_huskies",           "district": "CMS",            "type": "school"},
     {"handle": "houghathletics",          "district": "CMS",            "type": "athletics"},
-    {"handle": "ardreyhsathletics",       "district":="CMS",            "type": "athletics"},
+    {"handle": "ardreyhsathletics",       "district": "CMS",            "type": "athletics"},
     {"handle": "ardreykellathletics",     "district": "CMS",            "type": "athletics"},
     {"handle": "ballantyneridgehs",       "district": "CMS",            "type": "school"},
     {"handle": "pinkneyms_cms",           "district": "CMS",            "type": "school"},
