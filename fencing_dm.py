@@ -17,6 +17,8 @@ DM_DELAY_MIN  = float(os.getenv('FENCING_DM_DELAY_MIN', '90'))   # seconds betwe
 DM_DELAY_MAX  = float(os.getenv('FENCING_DM_DELAY_MAX', '240'))
 
 STATE_FILE = 'fencing_dm_state.json'
+SESSION_FILE = 'fencing_ig_session.json'
+IG_SESSION_ENV = os.getenv('FENCING_IG_SESSION', '')
 
 # ── Landing page (update when live) ───────────────────────────────────────────
 BOOKING_LINK = os.getenv('FENCING_BOOKING_LINK', 'nathanbinglephotography.com/fencing')
@@ -210,12 +212,41 @@ def run_fencing_dm():
     cl = Client()
     cl.delay_range = [3, 7]
 
+    session_loaded = False
+
+    # Try loading saved session (shared with fencing_social.py)
+    if IG_SESSION_ENV:
+        try:
+            settings = json.loads(IG_SESSION_ENV)
+            cl.set_settings(settings)
+            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
+            log.info(f"[FENCING DM] Resumed session for @{FENCING_IG_USER}")
+            session_loaded = True
+        except Exception as e:
+            log.warning(f"[FENCING DM] Could not resume session from env: {e}")
+
+    if not session_loaded and os.path.exists(SESSION_FILE):
+        try:
+            cl.load_settings(SESSION_FILE)
+            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
+            log.info(f"[FENCING DM] Resumed session from file for @{FENCING_IG_USER}")
+            session_loaded = True
+        except Exception as e:
+            log.warning(f"[FENCING DM] Could not resume session from file: {e}")
+
+    if not session_loaded:
+        try:
+            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
+            log.info(f"[FENCING DM] Fresh login as @{FENCING_IG_USER}")
+        except Exception as e:
+            log.error(f"[FENCING DM] Login failed: {e}")
+            return
+
+    # Save session for next run
     try:
-        cl.login(FENCING_IG_USER, FENCING_IG_PASS)
-        log.info(f"[FENCING DM] Logged in as @{FENCING_IG_USER}")
-    except Exception as e:
-        log.error(f"[FENCING DM] Login failed: {e}")
-        return
+        cl.dump_settings(SESSION_FILE)
+    except Exception:
+        pass
 
     sent_today = 0
     batch = queue[:DMS_PER_DAY]

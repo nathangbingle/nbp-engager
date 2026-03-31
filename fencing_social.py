@@ -40,6 +40,8 @@ BOOKING_LINK       = os.getenv('FENCING_BOOKING_LINK', 'nathanbinglephotography.
 TOTAL_SLOTS        = 300
 
 STATE_FILE = 'fencing_social_state.json'
+SESSION_FILE = 'fencing_ig_session.json'
+IG_SESSION_ENV = os.getenv('FENCING_IG_SESSION', '')  # persisted session JSON
 
 # ── State ──────────────────────────────────────────────────────────────────────
 
@@ -242,21 +244,67 @@ def generate_hype_caption(image_bytes, mime_type, slots_claimed):
 
 # ── Instagram posting ───────────────────────────────────────────────────────────
 
-def post_to_instagram(image_bytes, caption):
+def get_ig_client():
+    """Create an instagrapi Client with session persistence.
+
+    Tries to reuse a saved session to avoid fresh logins (which Instagram
+    rate-limits/challenges). Session is loaded from FENCING_IG_SESSION env
+    var first, then from a local file as fallback.
+    """
     try:
         from instagrapi import Client
     except ImportError:
         log.error('instagrapi not installed.')
-        return False
+        return None
 
     cl = Client()
     cl.delay_range = [2, 5]
 
+    session_loaded = False
+
+    # Try loading session from env var (survives Railway redeploys)
+    if IG_SESSION_ENV:
+        try:
+            settings = json.loads(IG_SESSION_ENV)
+            cl.set_settings(settings)
+            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
+            log.info(f'Resumed session for @{FENCING_IG_USER}')
+            session_loaded = True
+        except Exception as e:
+            log.warning(f'Could not resume session from env: {e}')
+
+    # Try loading session from local file
+    if not session_loaded and os.path.exists(SESSION_FILE):
+        try:
+            cl.load_settings(SESSION_FILE)
+            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
+            log.info(f'Resumed session from file for @{FENCING_IG_USER}')
+            session_loaded = True
+        except Exception as e:
+            log.warning(f'Could not resume session from file: {e}')
+
+    # Fresh login as last resort
+    if not session_loaded:
+        try:
+            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
+            log.info(f'Fresh login as @{FENCING_IG_USER}')
+        except Exception as e:
+            log.error(f'Instagram login failed: {e}')
+            return None
+
+    # Save session for next run
     try:
-        cl.login(FENCING_IG_USER, FENCING_IG_PASS)
-        log.info(f'Logged in as @{FENCING_IG_USER}')
+        cl.dump_settings(SESSION_FILE)
+        log.info('Session saved to file.')
     except Exception as e:
-        log.error(f'Instagram login failed: {e}')
+        log.warning(f'Could not save session file: {e}')
+
+    return cl
+
+
+def post_to_instagram(image_bytes, caption):
+    cl = get_ig_client()
+    if not cl:
         return False
 
     # Save image to temp file (instagrapi needs a file path)
@@ -266,17 +314,13 @@ def post_to_instagram(image_bytes, caption):
 
     try:
         cl.photo_upload(tmp_path, caption=caption)
-        log.info('✅ Photo posted to Instagram')
+        log.info('Photo posted to Instagram')
         return True
     except Exception as e:
         log.error(f'Instagram post failed: {e}')
         return False
     finally:
         os.unlink(tmp_path)
-        try:
-            cl.logout()
-        except Exception:
-            pass
 
 # ── Main job ────────────────────────────────────────────────────────────────────
 
@@ -341,5 +385,56 @@ def start_fencing_social_scheduler():
     """Called from scheduler.py — runs at 9am, 12pm, 3pm ET."""
     run_fencing_social()
 
+def dry_run():
+    """Generate image + caption and display without posting to Instagram."""
+    log.info('[DRY RUN] Generating post preview...')
+
+    state = load_state()
+    post_type = state.get('next_post_type', 'photo')
+    slots = state.get('slots_claimed', 127)
+
+    log.info(f'[DRY RUN] Post type: {post_type}, slots claimed: {slots}')
+
+    svc = get_drive_service()
+    if not svc:
+        log.error('[DRY RUN] No Drive service.')
+        return
+
+    images = list_images(svc, DRIVE_FOLDER_ID)
+    if not images:
+        log.warning('[DRY RUN] No images in Drive folder.')
+        return
+
+    f = images[0]
+    log.info(f"[DRY RUN] Image: {f['name']}")
+
+    buf = download_image(svc, f['id'])
+    img_bytes, mime = prepare_image(buf, f['mimeType'])
+    square_bytes = make_square(img_bytes)
+
+    if post_type == 'photo':
+        caption = generate_photo_caption(img_bytes, mime, f['name'])
+    else:
+        caption = generate_hype_caption(img_bytes, mime, slots)
+
+    # Save preview image locally
+    preview_path = 'preview_post.jpg'
+    with open(preview_path, 'wb') as pf:
+        pf.write(square_bytes)
+
+    print('\n' + '=' * 60)
+    print(f'POST TYPE: {post_type.upper()}')
+    print(f'IMAGE: {f["name"]}')
+    print(f'PREVIEW SAVED: {preview_path}')
+    print('=' * 60)
+    print(f'\nCAPTION:\n{caption}')
+    print('\n' + '=' * 60)
+    print('(Not posted — dry run only)')
+
+
 if __name__ == '__main__':
-    run_fencing_social()
+    import sys
+    if '--dry-run' in sys.argv:
+        dry_run()
+    else:
+        run_fencing_social()
