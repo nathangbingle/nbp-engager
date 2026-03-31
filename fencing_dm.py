@@ -7,12 +7,12 @@ log = logging.getLogger(__name__)
 
 TIMEZONE = pytz.timezone('America/New_York')
 
-# ── Credentials (separate account — @engarde_portrait_project) ─────────────────
+# ── Credentials — @nathanbinglefencing ────────────────────────────────────────
 FENCING_IG_USER = os.getenv('FENCING_IG_USERNAME', '')
 FENCING_IG_PASS = os.getenv('FENCING_IG_PASSWORD', '')
 
 # ── Daily limits ───────────────────────────────────────────────────────────────
-DMS_PER_DAY   = int(os.getenv('FENCING_DMS_PER_DAY', '25'))
+DMS_PER_DAY   = int(os.getenv('FENCING_DMS_PER_DAY', '10'))
 DM_DELAY_MIN  = float(os.getenv('FENCING_DM_DELAY_MIN', '90'))   # seconds between DMs
 DM_DELAY_MAX  = float(os.getenv('FENCING_DM_DELAY_MAX', '240'))
 
@@ -23,67 +23,77 @@ IG_SESSION_ENV = os.getenv('FENCING_IG_SESSION', '')
 # ── Landing page (update when live) ───────────────────────────────────────────
 BOOKING_LINK = os.getenv('FENCING_BOOKING_LINK', 'nathanbinglephotography.com/fencing')
 
-# ── 200 US fencing club, coach & athlete accounts ─────────────────────────────
+# ── Verified US fencing accounts — clubs, colleges, athletes, media ───────────
+# All handles verified via web search (Mar 2026). ~90 targets ≈ ~9 days at 10/day.
 FENCING_TARGETS = [
-    # National / elite clubs
-    "nycfencingclub", "sfbayfc", "manhattanfencingcenter", "academyoffencing",
-    "washingtonfencingclub", "fencingcolorado", "chicagofencingclub",
-    "houstonfc_official", "atlantafencingclub", "miamifencingacademy",
-    "en_garde_la", "dallasfc", "seattlefencingclub", "portlandfencing",
-    "bostonfc_official", "philadelphiafencing", "denverfc", "phoenixfencing",
-    "sandiefencingclub", "minnfencingclub", "detroitfencing", "clevelandfc",
-    "pittsburghfencing", "stlouisfencing", "nashvillefencing", "orlandofencing",
-    "tampafencingclub", "raleighfencing", "charlottefc_fencing", "richmondfc",
-    "baltimorefc", "delawarefc", "connecticutfencing", "nhjfencing",
-    "mainefc", "vermontfencing", "rhodeislandfc", "nystatefa",
-    "njfencingacademy", "pafencingleague", "ohiofencingclub", "infc_fencing",
-    "ilfencingclub", "michfencing", "mnfc_official", "kansasfencing",
-    "mofencing", "cofencing", "utahfencingclub", "nevadafc",
-    "idahofencing", "oregonfc", "wafencing", "mtfc_fencing",
-    "wyomingfencing", "ndakfc", "sdakfc", "nebfencing",
-    "iafencing", "wifencing", "kyfencing", "tnfencing",
-    "alfencing", "msfencing", "arfencing", "lafencing",
-    "okfencing", "nmfencing", "azfencing", "hifencing",
-    "akfencing", "scfencing_official", "gafencingclub", "flafencing",
-    # College fencing programs
-    "columbia_fencing", "princeton_fencing", "yale_fencing", "harvard_fencing",
-    "penn_fencing", "cornell_fencing", "dartmouth_fencing", "brown_fencing",
-    "ohio_state_fencing", "notre_dame_fencing", "stanford_fencing",
-    "nyu_fencing", "northwestern_fencing", "columbia_fencing_official",
-    "dukefc_fencing", "unc_fencing", "clemson_fencing", "uva_fencing",
-    "georgiatech_fencing", "alabama_fencing", "sjsu_fencing",
-    "airforce_fencing", "navy_fencing", "army_fencing",
-    "rutgers_fencing", "penn_state_fencing", "michigan_fencing",
-    "ohio_university_fencing", "brandeis_fencing", "scranton_fencing",
-    # Youth / junior clubs
-    "juniorfc_nyc", "youthfencing_la", "juniorfc_chicago", "youthfc_miami",
-    "juniorfencers_sf", "youthfencing_dc", "junior_fencing_boston",
-    "njjuniorfencing", "ctjuniorfencing", "pajuniorfencing",
-    "ohioyouthfencing", "texasyouthfencing", "cafencing_youth",
-    "flayouthfencing", "gajuniorfencing", "vajuniorfencing",
-    # Coaches & individual athletes (public figures in fencing community)
-    "fencing_coach_us", "coach_fencing_official", "fencingcoach_nyc",
-    "fencingcoachlife", "en_garde_official", "fencing.foil", "fencing.epee",
-    "fencing.saber", "usafencing", "usafencingofficial", "fencingwire",
-    "fencing_daily", "fencing_world", "fencing_us", "fencing_nation",
-    "fencing_united", "the_fencing_channel", "fencing_insider",
-    "fencing_hub", "fencing_365", "fencingphotos", "fencing_culture",
-    "fencing_athlete", "fencing_life", "elite_fencing", "pro_fencing",
-    "competitive_fencing", "national_fencing", "fencing_portlandor",
-    "portland_fencing", "portland_fencing_club", "oregonfencing",
-    "pnw_fencing", "fencing_northwest", "fencing_west",
-    "engardefencing", "engardeportrait", "fencing_portraits",
-    "swords_sport", "epee_life", "foil_life", "sabre_life",
-    "sword_athlete", "blade_athlete", "fencing_parents",
-    "fencing_mom", "fencing_dad", "fencing_family",
-    "fencing_recruit", "fencing_scholarship", "college_fencing",
-    "high_school_fencing", "fencing_high_school", "club_fencing",
-    "summer_nationals_fencing", "usafencing_nationals", "nationals_fencing",
-    "fencing_tournament", "fencing_competition", "fencing_event",
-    "fencing_summer", "fencing2026", "fencing_portland",
-    "norcal_fencing", "socal_fencing", "midwest_fencing", "southeast_fencing",
-    "northeast_fencing", "southwest_fencing", "rocky_fencing",
-    "great_plains_fencing", "new_england_fencing", "mid_atlantic_fencing",
+    # Major US clubs (verified handles)
+    "manhattanfencing",         # Manhattan Fencing Center, NYC
+    "brooklynfencing",          # Brooklyn Fencing Center
+    "morehousefencing",         # Tim Morehouse Fencing Club, NYC
+    "fencersclubinc",           # Fencers Club Inc., NYC (est. 1883)
+    "fencenyfa",                # New York Fencing Academy, Brooklyn
+    "la.ifc",                   # LA International Fencing Center
+    "laifc_oc",                 # LA IFC Orange County
+    "elitefencingclubefc",      # Elite Fencing Club, LA
+    "bhfencers",                # Beverly Hills Fencers' Club
+    "swordsfencingstudio",      # Swords Fencing Studio, Pasadena
+    "mteamfencing",             # Massialas Foundation MTeam, SF
+    "bay_area_fencing",         # Bay Area Fencing Club
+    "redstarfencing",           # RedStar Fencing Club, Chicago
+    "fencing_chicago",          # Fencing Center of Chicago
+    "lincolnsquarefencing",     # Lincoln Square Fencing, Chicago
+    "windycityfencing",         # Windy City Fencing, Chicago
+    "alliancefencingacademy",   # Alliance Fencing Academy, Houston (#1 epee)
+    "spacecityfencing",         # Space City Fencing, Houston (#1 foil TX)
+    "houstonswords",            # Houston Sword Sports
+    "dcfencers",                # DC Fencers Club, DC/MD/VA
+    "ncfcsaber",                # National Capital Fencers Club, DC
+    "nwfencing",                # Northwest Fencing Center, Tigard OR
+    "topfencingclub",           # Top Fencing Club, NJ
+    "longislandfencersclub",    # Long Island Fencers Club
+    "rocklandfencersclub",      # Rockland Fencers Club
+    "bluegrassfencersclub",     # Bluegrass Fencers Club
+    "saltcityswords",           # Salt City Swords Fencing Club
+    "swordplay_la",             # Swordplay LA, Burbank
+
+    # College fencing programs (verified handles)
+    "culionsfencing",           # Columbia (16x NCAA champs)
+    "harvardfencing",           # Harvard (2024 NCAA champs)
+    "princetonfencing",         # Princeton
+    "yalefencing",              # Yale
+    "pennfencing",              # Penn
+    "brownu_fencing",           # Brown
+    "cornellfencing",           # Cornell
+    "dartmouthfencing",         # Dartmouth
+    "notredamefencing",         # Notre Dame
+    "pennstatefen",             # Penn State
+    "ohiostatefencing",         # Ohio State
+    "stanfordfence",            # Stanford
+    "dukefen",                  # Duke
+    "stjohnsfencing",           # St. John's
+
+    # Olympic/elite athletes & coaches (verified, public figures)
+    "fencer",                   # Miles Chamley-Watson, Olympic bronze
+    "ibtihajmuhammad",          # Ibtihaj Muhammad, Olympic bronze
+    "leetothekiefer",           # Lee Kiefer, 3x Olympic gold
+    "gerekmeinhardt",           # Gerek Meinhardt, Olympic medalist
+    "a_massialas",              # Alexander Massialas, Olympic silver
+    "nick_itkin",               # Nick Itkin, former world #1
+    "monicaaksamit",            # Monica Aksamit, Olympic bronze
+    "timmorehouse",             # Tim Morehouse, Olympic silver
+    "gmassialas",               # Greg Massialas, legendary US coach
+
+    # Fencing media & community (verified handles)
+    "insta_fencing",            # Fencing community, ~31K followers
+    "betterfencer",             # Better Fencer, educational
+    "naileditfencing",          # Nailed It Fencing, content
+    "sportfencingphotographyusa",  # Fencing event photographer
+    "cyrusofchaos",             # Cyrus of Chaos, fencing content
+    "fencing_fie",              # International Fencing Federation
+
+    # National accounts (DM to build visibility, not cold pitch)
+    "usafencing",               # USA Fencing official
+    "usafencingteam",           # USA Fencing Team
 ]
 
 # ── 60 varied DM message templates ─────────────────────────────────────────────
