@@ -3,10 +3,10 @@ NBP Social Agent — @nathanbinglephotography
 - Posts 3x daily: 10am, 1pm, 4pm ET (offset from fencing schedule)
 - AI-generated captions tailored to: family portraits, weddings, branding
 - Pulls images from Google Drive folder, moves to _posted after use
-- Posts directly via instagrapi
+- Posts via Publer API (no direct IG login needed)
 """
 
-import os, io, json, time, base64, logging, tempfile, random
+import os, io, json, base64, logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import requests
@@ -22,23 +22,22 @@ log = logging.getLogger('nbp-social')
 TIMEZONE = ZoneInfo('America/New_York')
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-NBP_IG_USER        = os.getenv('NBP_IG_USERNAME', '')
-NBP_IG_PASS        = os.getenv('NBP_IG_PASSWORD', '')
+PUBLER_API_KEY     = os.getenv('NBP_PUBLER_API_KEY', '')
 ANTHROPIC_API_KEY  = os.getenv('ANTHROPIC_API_KEY', '')
 NBP_DRIVE_FOLDER   = os.getenv('NBP_DRIVE_FOLDER_ID', '')
 OAUTH_CREDS_JSON   = os.getenv('GDRIVE_OAUTH_CREDENTIALS', '')
 TOKEN_JSON         = os.getenv('GDRIVE_TOKEN', '')
 
+# Target account name in Publer — used to filter which account to post to
+NBP_PUBLER_ACCOUNT = os.getenv('NBP_PUBLER_ACCOUNT_NAME', 'nathanbinglephotography')
+
 SCOPES             = ['https://www.googleapis.com/auth/drive']
 POSTED_FOLDER_NAME = '_posted'
 IMAGE_MIME_TYPES   = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
 ANTHROPIC_BASE     = 'https://api.anthropic.com/v1'
+PUBLER_BASE        = 'https://app.publer.com/api/v1'
 
-BOOKING_LINK       = os.getenv('NBP_BOOKING_LINK', 'https://www.nathanbinglephotography.com')
-
-STATE_FILE  = 'nbp_social_state.json'
-SESSION_FILE = 'nbp_ig_session.json'
-IG_SESSION_ENV = os.getenv('NBP_IG_SESSION', '')
+STATE_FILE = 'nbp_social_state.json'
 
 # ── State ──────────────────────────────────────────────────────────────────────
 
@@ -46,10 +45,7 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE) as f:
             return json.load(f)
-    return {
-        'total_posts': 0,
-        'last_run_key': None
-    }
+    return {'total_posts': 0, 'last_run_key': None}
 
 def save_state(state):
     with open(STATE_FILE, 'w') as f:
@@ -113,14 +109,12 @@ def move_to_posted(svc, file_id, posted_folder_id):
     ).execute()
     log.info(f'Moved {file_id} to _posted')
 
-def prepare_image(buf, mime_type, max_bytes=8_000_000, max_px=7900):
+def prepare_image(buf, mime_type, max_bytes=2_000_000):
     data = buf.read()
+    if len(data) <= max_bytes:
+        return data, mime_type
     img = Image.open(io.BytesIO(data)).convert('RGB')
-    w, h = img.size
-    if max(w, h) > max_px:
-        scale = max_px / max(w, h)
-        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-    out, quality = io.BytesIO(), 90
+    out, quality = io.BytesIO(), 85
     while quality >= 40:
         out.seek(0); out.truncate()
         img.save(out, format='JPEG', quality=quality)
@@ -132,11 +126,13 @@ def prepare_image(buf, mime_type, max_bytes=8_000_000, max_px=7900):
 def make_square(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
     w, h = img.size
+    if w == h:
+        return image_bytes
     side = min(w, h)
     left, top = (w - side) // 2, (h - side) // 2
     img = img.crop((left, top, left + side, top + side))
     out = io.BytesIO()
-    img.save(out, format='JPEG', quality=92)
+    img.save(out, format='JPEG', quality=90)
     return out.getvalue()
 
 # ── Caption generation ──────────────────────────────────────────────────────────
@@ -192,79 +188,92 @@ def generate_caption(image_bytes, mime_type, filename):
     resp.raise_for_status()
     return resp.json()['content'][0]['text'].strip()
 
-# ── Instagram posting ───────────────────────────────────────────────────────────
+# ── Publer ─────────────────────────────────────────────────────────────────────
 
-def get_ig_client():
-    try:
-        from instagrapi import Client
-    except ImportError:
-        log.error('instagrapi not installed.')
-        return None
+def get_publer_headers():
+    return {'Authorization': f'Bearer-API {PUBLER_API_KEY}', 'Content-Type': 'application/json'}
 
-    cl = Client()
-    cl.delay_range = [2, 5]
+def get_publer_workspace():
+    resp = requests.get(f'{PUBLER_BASE}/workspaces', headers=get_publer_headers(), timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    workspaces = data if isinstance(data, list) else data.get('workspaces', [data])
+    wid = workspaces[0].get('id') or workspaces[0].get('_id')
+    log.info(f'Publer workspace: {wid}')
+    return wid
 
-    session_loaded = False
+def get_publer_ig_account(workspace_id):
+    """Find the Instagram account in Publer matching NBP_PUBLER_ACCOUNT_NAME."""
+    headers = get_publer_headers()
+    headers['Publer-Workspace-Id'] = workspace_id
+    resp = requests.get(f'{PUBLER_BASE}/accounts', headers=headers, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    accounts = data if isinstance(data, list) else data.get('accounts', [])
+    log.info(f'Publer accounts: {[a.get("name","?") for a in accounts]}')
 
-    if IG_SESSION_ENV:
-        try:
-            settings = json.loads(IG_SESSION_ENV)
-            cl.set_settings(settings)
-            cl.login(NBP_IG_USER, NBP_IG_PASS)
-            log.info(f'Resumed session for @{NBP_IG_USER}')
-            session_loaded = True
-        except Exception as e:
-            log.warning(f'Could not resume session from env: {e}')
+    # Find the matching IG account
+    target = NBP_PUBLER_ACCOUNT.lower()
+    for a in accounts:
+        name = (a.get('name') or '').lower()
+        platform = (a.get('type') or a.get('platform') or '').lower()
+        if target in name and ('ig' in platform or 'instagram' in platform):
+            account_id = a.get('id') or a.get('_id')
+            log.info(f'Matched Publer IG account: {a.get("name")} (id={account_id})')
+            return a
 
-    if not session_loaded and os.path.exists(SESSION_FILE):
-        try:
-            cl.load_settings(SESSION_FILE)
-            cl.login(NBP_IG_USER, NBP_IG_PASS)
-            log.info(f'Resumed session from file for @{NBP_IG_USER}')
-            session_loaded = True
-        except Exception as e:
-            log.warning(f'Could not resume session from file: {e}')
+    # Fallback: just find any IG account with matching name
+    for a in accounts:
+        name = (a.get('name') or '').lower()
+        if target in name:
+            account_id = a.get('id') or a.get('_id')
+            log.info(f'Matched Publer account (fallback): {a.get("name")} (id={account_id})')
+            return a
 
-    if not session_loaded:
-        try:
-            cl.login(NBP_IG_USER, NBP_IG_PASS)
-            log.info(f'Fresh login as @{NBP_IG_USER}')
-        except Exception as e:
-            log.error(f'Instagram login failed: {e}')
-            return None
+    log.error(f'No Publer account matching "{NBP_PUBLER_ACCOUNT}" found.')
+    return None
 
-    try:
-        cl.dump_settings(SESSION_FILE)
-        log.info('Session saved to file.')
-    except Exception as e:
-        log.warning(f'Could not save session file: {e}')
+def upload_media_to_publer(image_bytes, filename, mime_type, workspace_id):
+    headers = {'Authorization': f'Bearer-API {PUBLER_API_KEY}', 'Publer-Workspace-Id': workspace_id}
+    files = {'file': (filename, image_bytes, mime_type)}
+    resp = requests.post(f'{PUBLER_BASE}/media', headers=headers, files=files, timeout=120)
+    resp.raise_for_status()
+    data = resp.json()
+    media_id = data.get('id') or data.get('_id') or data.get('media_id')
+    log.info(f'Uploaded media to Publer: {media_id}')
+    return media_id
 
-    return cl
+def post_via_publer(account, caption, image_bytes, filename, workspace_id):
+    """Post a square image to Instagram via Publer."""
+    square_bytes = make_square(image_bytes)
+    media_id = upload_media_to_publer(square_bytes, filename, 'image/jpeg', workspace_id)
 
-def post_to_instagram(image_bytes, caption):
-    cl = get_ig_client()
-    if not cl:
-        return False
+    account_id = account.get('id') or account.get('_id')
+    headers = get_publer_headers()
+    headers['Publer-Workspace-Id'] = workspace_id
 
-    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-        tmp.write(image_bytes)
-        tmp_path = tmp.name
+    payload = {'bulk': {'state': 'published', 'posts': [{
+        'networks': {'instagram': {
+            'type': 'photo',
+            'text': caption,
+            'media': [{'id': media_id, 'type': 'image'}]
+        }},
+        'accounts': [{'id': account_id}]
+    }]}}
 
-    try:
-        cl.photo_upload(tmp_path, caption=caption)
-        log.info('Photo posted to Instagram')
+    resp = requests.post(f'{PUBLER_BASE}/posts/schedule/publish', headers=headers, json=payload, timeout=30)
+    if resp.ok:
+        log.info(f'Posted to {account.get("name")} via Publer')
         return True
-    except Exception as e:
-        log.error(f'Instagram post failed: {e}')
+    else:
+        log.error(f'Publer post failed: {resp.status_code} {resp.text}')
         return False
-    finally:
-        os.unlink(tmp_path)
 
 # ── Main job ────────────────────────────────────────────────────────────────────
 
 def run_nbp_social():
-    if not NBP_IG_USER or not NBP_IG_PASS:
-        log.error('[NBP SOCIAL] NBP_IG_USERNAME/PASSWORD not set.')
+    if not PUBLER_API_KEY:
+        log.error('[NBP SOCIAL] NBP_PUBLER_API_KEY not set.')
         return
 
     if not NBP_DRIVE_FOLDER:
@@ -272,12 +281,17 @@ def run_nbp_social():
         return
 
     state = load_state()
-
     log.info(f'[NBP SOCIAL] Running — total posts so far: {state.get("total_posts", 0)}')
 
     svc = get_drive_service()
     if not svc:
         log.error('[NBP SOCIAL] No Drive service available.')
+        return
+
+    # Set up Publer
+    workspace_id = get_publer_workspace()
+    account = get_publer_ig_account(workspace_id)
+    if not account:
         return
 
     posted_id = get_or_create_folder(svc, NBP_DRIVE_FOLDER, POSTED_FOLDER_NAME)
@@ -292,13 +306,12 @@ def run_nbp_social():
 
     buf = download_image(svc, f['id'])
     img_bytes, mime = prepare_image(buf, f['mimeType'])
-    square_bytes = make_square(img_bytes)
 
     log.info('[NBP SOCIAL] Generating caption...')
     caption = generate_caption(img_bytes, mime, f['name'])
     log.info(f'[NBP SOCIAL] Caption preview: {caption[:100]}...')
 
-    success = post_to_instagram(square_bytes, caption)
+    success = post_via_publer(account, caption, img_bytes, f['name'], workspace_id)
 
     if success:
         move_to_posted(svc, f['id'], posted_id)
