@@ -21,7 +21,7 @@ SESSION_FILE = 'fencing_ig_session.json'
 IG_SESSION_ENV = os.getenv('FENCING_IG_SESSION', '')
 
 # ── Landing page (update when live) ───────────────────────────────────────────
-BOOKING_LINK = os.getenv('FENCING_BOOKING_LINK', 'nathanbinglephotography.com/fencing')
+BOOKING_LINK = os.getenv('FENCING_BOOKING_LINK', 'https://www.nathanbinglephotography.com/usafencing')
 
 # ── Verified US fencing accounts — clubs, colleges, athletes, media ───────────
 # All handles verified via web search (Mar 2026). ~90 targets ≈ ~9 days at 10/day.

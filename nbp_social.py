@@ -1,14 +1,13 @@
 """
-NBP Fencing Social Agent — @nathanbinglefencing
-- Posts 3x daily: 9am, 12pm, 3pm ET
-- Alternates between PHOTO posts (portrait + descriptive caption)
-  and HYPE posts (portrait + Portland countdown/scarcity caption)
+NBP Social Agent — @nathanbinglephotography
+- Posts 3x daily: 10am, 1pm, 4pm ET (offset from fencing schedule)
+- AI-generated captions tailored to: family portraits, weddings, branding
 - Pulls images from Google Drive folder, moves to _posted after use
-- Posts directly via instagrapi (no Publer required)
+- Posts directly via instagrapi
 """
 
 import os, io, json, time, base64, logging, tempfile, random
-from datetime import datetime, date
+from datetime import datetime
 from zoneinfo import ZoneInfo
 import requests
 from PIL import Image
@@ -18,15 +17,15 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-log = logging.getLogger('fencing-social')
+log = logging.getLogger('nbp-social')
 
 TIMEZONE = ZoneInfo('America/New_York')
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-FENCING_IG_USER    = os.getenv('FENCING_IG_USERNAME', '')
-FENCING_IG_PASS    = os.getenv('FENCING_IG_PASSWORD', '')
+NBP_IG_USER        = os.getenv('NBP_IG_USERNAME', '')
+NBP_IG_PASS        = os.getenv('NBP_IG_PASSWORD', '')
 ANTHROPIC_API_KEY  = os.getenv('ANTHROPIC_API_KEY', '')
-DRIVE_FOLDER_ID    = os.getenv('FENCING_DRIVE_FOLDER_ID', '1D6kThv7SWr6vwSUFqRWyyMUtcQStjjBv')
+NBP_DRIVE_FOLDER   = os.getenv('NBP_DRIVE_FOLDER_ID', '')
 OAUTH_CREDS_JSON   = os.getenv('GDRIVE_OAUTH_CREDENTIALS', '')
 TOKEN_JSON         = os.getenv('GDRIVE_TOKEN', '')
 
@@ -35,13 +34,11 @@ POSTED_FOLDER_NAME = '_posted'
 IMAGE_MIME_TYPES   = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
 ANTHROPIC_BASE     = 'https://api.anthropic.com/v1'
 
-EVENT_DATE         = date(2026, 7, 1)  # USA Fencing Summer Nationals Portland
-BOOKING_LINK       = os.getenv('FENCING_BOOKING_LINK', 'https://www.nathanbinglephotography.com/usafencing')
-TOTAL_SLOTS        = 300
+BOOKING_LINK       = os.getenv('NBP_BOOKING_LINK', 'https://www.nathanbinglephotography.com')
 
-STATE_FILE = 'fencing_social_state.json'
-SESSION_FILE = 'fencing_ig_session.json'
-IG_SESSION_ENV = os.getenv('FENCING_IG_SESSION', '')  # persisted session JSON
+STATE_FILE  = 'nbp_social_state.json'
+SESSION_FILE = 'nbp_ig_session.json'
+IG_SESSION_ENV = os.getenv('NBP_IG_SESSION', '')
 
 # ── State ──────────────────────────────────────────────────────────────────────
 
@@ -50,9 +47,7 @@ def load_state():
         with open(STATE_FILE) as f:
             return json.load(f)
     return {
-        'next_post_type': 'photo',   # alternates: 'photo' | 'hype'
         'total_posts': 0,
-        'slots_claimed': 127,        # starts at 127, increments for scarcity
         'last_run_key': None
     }
 
@@ -146,91 +141,46 @@ def make_square(image_bytes):
 
 # ── Caption generation ──────────────────────────────────────────────────────────
 
-PHOTO_SYSTEM_PROMPT = """You write Instagram captions for @nathanbinglefencing — the official portrait photography account for USA Fencing Summer Nationals.
+CAPTION_SYSTEM_PROMPT = """You write Instagram captions for @nathanbinglephotography — a Charlotte-area photographer. Family portraits, weddings, branding.
 
-CAMPAIGN: The En Garde Portrait Project — elite athlete portraits at the nation's largest fencing event. Portland, Oregon. July 2026. 300 slots.
+VOICE: Minimal. Dry. Cool. Think photographer's notebook, not marketing copy. 1-2 sentences max before hashtags. Say less. Let the photo do the work.
 
-VOICE: Direct. Confident. Identity-driven. The athlete earned this portrait. Not commercial, not salesy — make them feel it.
+GOOD EXAMPLES:
+- "Golden hour at the lake. The Johnsons."
+- "Second dance was better than the first."
+- "New headshots for @studio. Shot on location downtown."
+- "Fall sessions are open. Link in bio."
+- "She said yes. He cried first."
 
-BANNED WORDS: passion, love capturing, memories, timeless, stunning, breathtaking, cherish, elevate, showcase, journey, thrilled, excited to share, making memories, so proud.
+BAD EXAMPLES (never write like this):
+- "So honored to capture this beautiful family's special day!"
+- "There's nothing quite like the magic of golden hour with people you love."
+- "When love is in the air and the light is just right, everything falls into place."
+
+ABSOLUTELY BANNED: passion, love capturing, memories, timeless, stunning, breathtaking, cherish, elevate, showcase, journey, thrilled, excited, proud, dream, magic, blessed, honored, humbled, special, beautiful moment, picture-perfect, so much fun, amazing, incredible. Also banned: rhetorical questions, exclamation marks (use sparingly — max 0-1 per caption), emoji overuse (0-2 max).
+
+ANALYZE THE IMAGE to determine session type and reference one specific detail you actually see.
 
 WRITE:
-- Hook line first — make a fencer stop scrolling
-- 2-3 tight sentences about the athlete and the portrait
-- One line about Portland pre-booking (soft, not pushy)
-- 12-15 hashtags including: #EnGardePortraitProject #USAFencing #FencingPortland2026 #NathanBinglePhotography #FencingPortrait #FencingPhotography #EliteFencer #SummerNationals2026 plus weapon/style specific tags
+- 1-2 short sentences. That's it. Maybe 3 if one is very short.
+- No fluff. No filler. No feelings monologue.
+- If there's a booking CTA, make it dead simple: "Fall sessions open." or "Link in bio."
+- 8-12 hashtags. Always include #NathanBinglePhotography #CharlottePhotographer. Rotate through surrounding area tags each post: #FortMillPhotographer #RockHillPhotographer #IndianLandPhotographer #LakeNormanPhotographer #MooresvillePhotographer #HuntersvillePhotographer #CorneliusPhotographer #DavidsonPhotographer #WaxhawPhotographer #MatthewsPhotographer #MintHillPhotographer #BallantynepPhotographer #SouthCharlotte #LakeWyliePhotographer. Include 2-3 area tags per post plus session-type tags.
 
 OUTPUT: Only the caption text including hashtags. No JSON. No preamble."""
 
-HYPE_SYSTEM_PROMPT = """You write Instagram hype posts for @nathanbinglefencing — the official portrait account for USA Fencing Summer Nationals 2026 in Portland.
-
-CAMPAIGN: The En Garde Portrait Project. 300 slots. Pre-book at {booking_link}. Event: July 1-6, 2026, Portland Oregon.
-
-TODAY: {today}. Days until Portland: {days_out}. Slots claimed (approximate): {slots_claimed} of 300.
-
-POST TYPES — rotate through these:
-- COUNTDOWN: days out, urgency building, slots filling
-- SCARCITY: X of 300 slots claimed, pre-book before they fill
-- IDENTITY: you've trained for years, this is your portrait, fencers as warriors
-- EVENT HYPE: Portland is going to be electric, 6000 fencers, one summer
-- PREBOOK VALUE: pre-book saves $20 vs walk-up, priority time slots
-
-VOICE: Punchy. Athlete-to-athlete energy. Make them feel the event coming.
-
-BANNED: passion, love capturing, memories, timeless, stunning, cherish, elevate, journey.
-
-WRITE:
-- Strong hook — one line
-- 2-3 sentences of hype content
-- Clear CTA with booking link
-- 12-15 hashtags: #EnGardePortraitProject #USAFencing #FencingPortland2026 #SummerNationals2026 #FencingNationals #USAFencingNationals #FencingPhotography #NathanBinglePhotography #FencingPortrait #EliteFencer plus relevant tags
-
-OUTPUT: Only the caption text including hashtags. No JSON. No preamble."""
-
-def generate_photo_caption(image_bytes, mime_type, filename):
+def generate_caption(image_bytes, mime_type, filename):
     payload = {
         'model': 'claude-sonnet-4-20250514',
         'max_tokens': 600,
-        'system': PHOTO_SYSTEM_PROMPT,
+        'system': CAPTION_SYSTEM_PROMPT,
         'messages': [{'role': 'user', 'content': [
             {'type': 'image', 'source': {
                 'type': 'base64',
                 'media_type': mime_type,
                 'data': base64.standard_b64encode(image_bytes).decode()
             }},
-            {'type': 'text', 'text': f'Write an Instagram caption for this fencing portrait. File: {filename}'}
-        ]}]
-    }
-    headers = {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-    }
-    resp = requests.post(f'{ANTHROPIC_BASE}/messages', json=payload, headers=headers, timeout=60)
-    resp.raise_for_status()
-    return resp.json()['content'][0]['text'].strip()
-
-def generate_hype_caption(image_bytes, mime_type, slots_claimed):
-    today = date.today()
-    days_out = (EVENT_DATE - today).days
-
-    system = HYPE_SYSTEM_PROMPT.format(
-        booking_link=BOOKING_LINK,
-        today=today.strftime('%B %d, %Y'),
-        days_out=days_out,
-        slots_claimed=slots_claimed
-    )
-    payload = {
-        'model': 'claude-sonnet-4-20250514',
-        'max_tokens': 600,
-        'system': system,
-        'messages': [{'role': 'user', 'content': [
-            {'type': 'image', 'source': {
-                'type': 'base64',
-                'media_type': mime_type,
-                'data': base64.standard_b64encode(image_bytes).decode()
-            }},
-            {'type': 'text', 'text': 'Write a hype/countdown Instagram caption for this fencing portrait.'}
+            {'type': 'text', 'text': f'Write an Instagram caption for this photo. File: {filename}'}
         ]}]
     }
     headers = {
@@ -245,12 +195,6 @@ def generate_hype_caption(image_bytes, mime_type, slots_claimed):
 # ── Instagram posting ───────────────────────────────────────────────────────────
 
 def get_ig_client():
-    """Create an instagrapi Client with session persistence.
-
-    Tries to reuse a saved session to avoid fresh logins (which Instagram
-    rate-limits/challenges). Session is loaded from FENCING_IG_SESSION env
-    var first, then from a local file as fallback.
-    """
     try:
         from instagrapi import Client
     except ImportError:
@@ -262,37 +206,33 @@ def get_ig_client():
 
     session_loaded = False
 
-    # Try loading session from env var (survives Railway redeploys)
     if IG_SESSION_ENV:
         try:
             settings = json.loads(IG_SESSION_ENV)
             cl.set_settings(settings)
-            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
-            log.info(f'Resumed session for @{FENCING_IG_USER}')
+            cl.login(NBP_IG_USER, NBP_IG_PASS)
+            log.info(f'Resumed session for @{NBP_IG_USER}')
             session_loaded = True
         except Exception as e:
             log.warning(f'Could not resume session from env: {e}')
 
-    # Try loading session from local file
     if not session_loaded and os.path.exists(SESSION_FILE):
         try:
             cl.load_settings(SESSION_FILE)
-            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
-            log.info(f'Resumed session from file for @{FENCING_IG_USER}')
+            cl.login(NBP_IG_USER, NBP_IG_PASS)
+            log.info(f'Resumed session from file for @{NBP_IG_USER}')
             session_loaded = True
         except Exception as e:
             log.warning(f'Could not resume session from file: {e}')
 
-    # Fresh login as last resort
     if not session_loaded:
         try:
-            cl.login(FENCING_IG_USER, FENCING_IG_PASS)
-            log.info(f'Fresh login as @{FENCING_IG_USER}')
+            cl.login(NBP_IG_USER, NBP_IG_PASS)
+            log.info(f'Fresh login as @{NBP_IG_USER}')
         except Exception as e:
             log.error(f'Instagram login failed: {e}')
             return None
 
-    # Save session for next run
     try:
         cl.dump_settings(SESSION_FILE)
         log.info('Session saved to file.')
@@ -301,13 +241,11 @@ def get_ig_client():
 
     return cl
 
-
 def post_to_instagram(image_bytes, caption):
     cl = get_ig_client()
     if not cl:
         return False
 
-    # Save image to temp file (instagrapi needs a file path)
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
         tmp.write(image_bytes)
         tmp_path = tmp.name
@@ -324,83 +262,68 @@ def post_to_instagram(image_bytes, caption):
 
 # ── Main job ────────────────────────────────────────────────────────────────────
 
-def run_fencing_social():
-    if not FENCING_IG_USER or not FENCING_IG_PASS:
-        log.error('[FENCING SOCIAL] FENCING_IG_USERNAME/PASSWORD not set.')
+def run_nbp_social():
+    if not NBP_IG_USER or not NBP_IG_PASS:
+        log.error('[NBP SOCIAL] NBP_IG_USERNAME/PASSWORD not set.')
+        return
+
+    if not NBP_DRIVE_FOLDER:
+        log.error('[NBP SOCIAL] NBP_DRIVE_FOLDER_ID not set.')
         return
 
     state = load_state()
-    post_type = state.get('next_post_type', 'photo')
-    slots = state.get('slots_claimed', 127)
 
-    log.info(f'[FENCING SOCIAL] Running — post type: {post_type}, slots claimed: {slots}')
+    log.info(f'[NBP SOCIAL] Running — total posts so far: {state.get("total_posts", 0)}')
 
     svc = get_drive_service()
     if not svc:
-        log.error('[FENCING SOCIAL] No Drive service available.')
+        log.error('[NBP SOCIAL] No Drive service available.')
         return
 
-    posted_id = get_or_create_folder(svc, DRIVE_FOLDER_ID, POSTED_FOLDER_NAME)
-    images = list_images(svc, DRIVE_FOLDER_ID)
+    posted_id = get_or_create_folder(svc, NBP_DRIVE_FOLDER, POSTED_FOLDER_NAME)
+    images = list_images(svc, NBP_DRIVE_FOLDER)
 
     if not images:
-        log.warning('[FENCING SOCIAL] No images in Drive folder — skipping.')
+        log.warning('[NBP SOCIAL] No images in Drive folder — skipping.')
         return
 
     f = images[0]
-    log.info(f"[FENCING SOCIAL] Using image: {f['name']}")
+    log.info(f"[NBP SOCIAL] Using image: {f['name']}")
 
     buf = download_image(svc, f['id'])
     img_bytes, mime = prepare_image(buf, f['mimeType'])
     square_bytes = make_square(img_bytes)
 
-    # Generate caption based on post type
-    if post_type == 'photo':
-        log.info('[FENCING SOCIAL] Generating PHOTO caption...')
-        caption = generate_photo_caption(img_bytes, mime, f['name'])
-    else:
-        log.info('[FENCING SOCIAL] Generating HYPE caption...')
-        caption = generate_hype_caption(img_bytes, mime, slots)
-        # Increment slots claimed slightly for scarcity realism
-        state['slots_claimed'] = min(slots + random.randint(1, 4), 290)
-
-    log.info(f'[FENCING SOCIAL] Caption preview: {caption[:100]}...')
+    log.info('[NBP SOCIAL] Generating caption...')
+    caption = generate_caption(img_bytes, mime, f['name'])
+    log.info(f'[NBP SOCIAL] Caption preview: {caption[:100]}...')
 
     success = post_to_instagram(square_bytes, caption)
 
     if success:
         move_to_posted(svc, f['id'], posted_id)
         state['total_posts'] = state.get('total_posts', 0) + 1
-        # Flip post type for next run
-        state['next_post_type'] = 'hype' if post_type == 'photo' else 'photo'
-        log.info(f"[FENCING SOCIAL] Done. Next post type: {state['next_post_type']}")
+        log.info(f"[NBP SOCIAL] Done. Total posts: {state['total_posts']}")
     else:
-        log.error('[FENCING SOCIAL] Post failed — will retry next scheduled run.')
+        log.error('[NBP SOCIAL] Post failed — will retry next scheduled run.')
 
     save_state(state)
 
-# ── Scheduler entry point ───────────────────────────────────────────────────────
-
-def start_fencing_social_scheduler():
-    """Called from scheduler.py — runs at 9am, 12pm, 3pm ET."""
-    run_fencing_social()
+# ── Dry run ────────────────────────────────────────────────────────────────────
 
 def dry_run():
-    """Generate image + caption and display without posting to Instagram."""
     log.info('[DRY RUN] Generating post preview...')
 
-    state = load_state()
-    post_type = state.get('next_post_type', 'photo')
-    slots = state.get('slots_claimed', 127)
-
-    log.info(f'[DRY RUN] Post type: {post_type}, slots claimed: {slots}')
+    if not NBP_DRIVE_FOLDER:
+        log.error('[DRY RUN] NBP_DRIVE_FOLDER_ID not set.')
+        return
 
     svc = get_drive_service()
     if not svc:
         log.error('[DRY RUN] No Drive service.')
         return
 
-    images = list_images(svc, DRIVE_FOLDER_ID)
+    images = list_images(svc, NBP_DRIVE_FOLDER)
     if not images:
         log.warning('[DRY RUN] No images in Drive folder.')
         return
@@ -412,18 +335,14 @@ def dry_run():
     img_bytes, mime = prepare_image(buf, f['mimeType'])
     square_bytes = make_square(img_bytes)
 
-    if post_type == 'photo':
-        caption = generate_photo_caption(img_bytes, mime, f['name'])
-    else:
-        caption = generate_hype_caption(img_bytes, mime, slots)
+    caption = generate_caption(img_bytes, mime, f['name'])
 
-    # Save preview image locally
-    preview_path = 'preview_post.jpg'
+    preview_path = 'nbp_preview_post.jpg'
     with open(preview_path, 'wb') as pf:
         pf.write(square_bytes)
 
     print('\n' + '=' * 60)
-    print(f'POST TYPE: {post_type.upper()}')
+    print('NBP SOCIAL — POST PREVIEW')
     print(f'IMAGE: {f["name"]}')
     print(f'PREVIEW SAVED: {preview_path}')
     print('=' * 60)
@@ -437,4 +356,4 @@ if __name__ == '__main__':
     if '--dry-run' in sys.argv:
         dry_run()
     else:
-        run_fencing_social()
+        run_nbp_social()

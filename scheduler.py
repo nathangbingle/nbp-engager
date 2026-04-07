@@ -2,6 +2,7 @@ import schedule, time, logging, os
 from engager import run_engager
 from fencing_dm import run_fencing_dm
 from fencing_social import run_fencing_social
+from nbp_social import run_nbp_social
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
@@ -25,6 +26,15 @@ if os.getenv('FENCING_IG_USERNAME'):
     print("Fencing DM agent:     ENABLED — 10:00am ET")
 else:
     print("Fencing DM agent:     DISABLED — set FENCING_IG_USERNAME to enable")
+
+# ── NBP social posts — 3x daily (10am, 1pm, 4pm ET) — offset from fencing ────
+if os.getenv('NBP_IG_USERNAME'):
+    schedule.every().day.at("10:00").do(run_nbp_social)
+    schedule.every().day.at("13:00").do(run_nbp_social)
+    schedule.every().day.at("16:00").do(run_nbp_social)
+    print("NBP social agent:     ENABLED — 10:00am, 1:00pm, 4:00pm ET")
+else:
+    print("NBP social agent:     DISABLED — set NBP_IG_USERNAME to enable")
 
 print("School engager:       ENABLED — 8:15am, 12:30pm, 5:45pm ET")
 print("─────────────────────────────────────────────────")
